@@ -8,9 +8,6 @@ import datetime
 load_dotenv()
 
 
-
-
-
 llm = ChatOpenAI(model="gpt-5-nano")
 result = llm.invoke("What is the capital of France?")
 print(result.content)
@@ -55,6 +52,6 @@ def get_weather(location: str) -> str:
 
 agent = create_agent(llm, tools=[get_weather])
 
-result = agent.invoke({"messages": [("human", "What is the weather like in New delhi today?")]})  # should be like dict with messages as list of tuples
+result = agent.invoke({"messages": [("human", "What is the weather like in fulda today?")]})  # should be like dict with messages as list of tuples
 
 print(result["messages"][-1].content)

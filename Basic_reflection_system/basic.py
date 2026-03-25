@@ -1,6 +1,6 @@
 import sys
 import os
-from typing import Annotated, TypedDict, List, Sequence
+from typing import Annotated, TypedDict, List, Sequence, Optional
 from dotenv import load_dotenv
 from langchain_core.messages import BaseMessage, HumanMessage , AIMessage
 from langgraph.graph import END, StateGraph , message
@@ -8,7 +8,7 @@ from operator import add
 from chains import generation_chain, reflection_chain
 from langchain_ollama import OllamaLLM
 from langchain_community.document_loaders import PyPDFLoader
-
+from pydantic import BaseModel, Field
 
 load_dotenv() 
 
@@ -31,49 +31,68 @@ def get_pdf_content(file_path: str) -> str:
 # print(type(response))  # <class 'langchain.messages.AIMessage'>
 
 
-class GraphState(TypedDict):
-    # This 'add' tells LangGraph to append new messages to the list
-    chat_history: Annotated[list[BaseMessage], add]
+class GraphState(BaseModel):
+    # job_description: str
+    # resume_content: str
 
-
-
+    current_draft : Optional[str] = None #expect a str
+    critique: Optional[str] = None
+    iterations: int = 0
+    optimization_score: int = Field(default= 0, ge=0 , le=100)
+    
+    # memory (The message Thread): This is a list of all the messages that have been exchanged in the conversation so far.
+    chat_history: Annotated[list[BaseMessage], add] = Field(default_factory=list)
+    
+    
 
 
 #The Logic: A Node is just a Python function that takes the current state, 
 # does some work (calls Llama 3), and returns the update.
-def generate_node(State: GraphState) -> dict: # every node recives the entire state
+def generate_node(state: GraphState) -> dict: # every node recives the entire state
     
-    result = generation_chain.invoke({ "messages": State["chat_history"] })  # the messages varible comes from MessagesPlaceholder(variable_name="messages")
+    rew_resume = generation_chain.invoke({ 
+                                          
+                                          "messages": state.chat_history
+                                      
+                                        })  # the messages varible comes from MessagesPlaceholder(variable_name="messages")
     # LangGraph will 'add' this one message to your 'chat_history'
-    return {"chat_history": [AIMessage(content = result)]}  # we return the entire chat history with the new message appended at the end. This is important for reflection to work properly, as it needs the full context of the conversation to provide meaningful feedback.
+    return {
+        "current_draft": rew_resume,
+        "iterations": state.iterations + 1,
+        "chat_history": [AIMessage(content=rew_resume)]
+        }  # we return the entire chat history with the new message appended at the end. This is important for reflection to work properly, as it needs the full context of the conversation to provide meaningful feedback.
 
-def reflect_node(State: GraphState) -> dict:
+def reflect_node(state: GraphState) -> dict:
     # 1. Pass the FULL chat_history so the Recruiter sees the JD AND the Draft
-    result = reflection_chain.invoke({
-        "messages": State["chat_history"] 
+    critique = reflection_chain.invoke({
+        
+        "messages": state.chat_history  #Dot notataion for pydantic
     })
     
     # 2. Return the critique as an AIMessage (since the Recruiter is an AI)
     # Note: Some people prefer wrapping critiques in HumanMessage 
     # to "trick" the next node into thinking a human gave feedback, 
     # but AIMessage is technically more accurate here.
-    return {"chat_history": [AIMessage(content=result)]}
+    return {"chat_history": [HumanMessage(content=critique)],
+            
+            "critique": critique
+            
+            }
 
 graph = StateGraph(GraphState)    
 
-graph.add_node(GENERATE, generate_node)
-graph.add_node(REFLECT, reflect_node)
-
 
 def should_continue(state: GraphState) -> str:
-    # This is a simple stopping condition that checks if the last message contains "Final CV"
+    # This is a simple stopping condition that checks if length of chat_history is greater than 4 (1 human input + 2 AI responses + 1 critique).
     # In a real application, you might want to use a more sophisticated method, 
     # such as checking for user input or a specific signal in the messages.
-    if len(state["chat_history"]) > 4:
-        return END  
+    Max_iterations = 3
     
-    return REFLECT  # Otherwise, we continue reflecting and generating until we hit the stopping condition
-
+    if state.iterations >= Max_iterations:
+        return END  # Stop if we've reached the maximum number of iterations
+    else:
+        return "continue" # Otherwise, we continue reflecting and generating until we hit the stopping condition
+    
 
 
 
@@ -84,21 +103,43 @@ if __name__ == "__main__":
     path= os.path.join("D:\\New Projects\\LLM\\Langgraph\\Basic_reflection_system", file_name)
     resume_content = get_pdf_content(path)
     
+    #add nodes
+    graph.add_node(GENERATE, generate_node)
+    graph.add_node(REFLECT, reflect_node)
+    
+    #set entry point
     graph.set_entry_point(GENERATE)
-    graph.add_conditional_edges(GENERATE, should_continue)  # Add a conditional edge to check if we should stop after reflection
-    graph.add_edge(REFLECT, GENERATE)  # Always generate after reflection 
+    
+    
+    graph.add_conditional_edges(
+        "generate", should_continue,
+        {
+            "continue": "reflect",  # If we should continue, go to the REFLECT node
+            END: END  # If we should stop, go to the END state
+        }
+        
+        
+    )
+    
+    graph.add_edge(REFLECT, GENERATE)  # Add a self-loop on the REFLECT node to allow for multiple rounds of reflection
+   
     app = graph.compile()
     print(app.get_graph().draw_mermaid())
     app.get_graph().print_ascii()
     
     # EXECUTE
     
-    inputs = {
+    initial_inputs = {
+        
+    # "job_description": jd,
+    # "resume_content": resume_content,  
     "chat_history": [
         HumanMessage(content=f"JD: {jd[:1000]}\n\nResume: {resume_content[:2000]}")
-    ]
+    ],
+    
+    "iterations": 0
 }
     
     print("\n--- Processing your Resume (Llama 3 is thinking...) ---")
-    final_state = app.invoke(inputs)
+    final_state = app.invoke(initial_inputs)
     print(final_state["chat_history"][-1].content)

@@ -1,4 +1,8 @@
 langchain-google-genai
 langchain
+langgraph
 langchain-community
 python-dotenv
+langchain-ollama
+pypdf
+grandalf 
