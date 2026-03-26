@@ -28,7 +28,7 @@ flowchart TD
   C -->|max iterations reached| E[END]
 ```
 
-## Generate Routing Diagram
+## Routing Diagram
 
 ```mermaid
 flowchart TD
