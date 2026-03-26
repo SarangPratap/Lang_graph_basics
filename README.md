@@ -105,7 +105,7 @@ pip install -r requirements.txt
 From Basic_reflection_system folder:
 
 ```bash
-python basic.py Resume_Sarang_pratap_chamola_Intern_kia.pdf
+python basic.py Resume.pdf
 ```
 
 Then paste the job description into stdin and finish input.
