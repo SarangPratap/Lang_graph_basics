@@ -34,8 +34,7 @@ def get_pdf_content(file_path: str) -> str:
 
 
 class GraphState(BaseModel):
-    # job_description: str
-    # resume_content: str
+    job_description: str
     summarize : Optional[str]  = None
     research_brief: Optional[str] = None
     current_draft : Optional[str] = None #expect a str
@@ -49,55 +48,101 @@ class GraphState(BaseModel):
 
 
 def summarize_node(state: GraphState):
+    
+    summarize_input = HumanMessage(
+        content=(
+             "Research Brief:\n"
+             f"{state.research_brief}\n\n"
+             "Current Draft:\n"
+             f"{state.current_draft}\n\n"
+        ))
+    
+    
     summary = summarize_chain.invoke({
-        "messages": state.chat_history
+        "messages": [summarize_input]
     })
     
-    return {"summarize": summary,
-            "chat_history": [AIMessage(content=summary)]}
+    return {
+        
+            "summarize": summary,
+    }
 
 
 
 
 def research_node(state: GraphState):
+    research_input = HumanMessage(
+        
+        content=(
+            "Job Description:\n"
+            f"{state.job_description}\n\n"
+            "Resume:\n"
+            f"{state.current_draft}\n\n"
+            
+        )
+        
+    )
+    
     research_brief = research_chain.invoke({
-        "messages": state.chat_history
+        "messages": [research_input]
     })
     
-    return {"research_brief": research_brief,
-            "chat_history": [AIMessage(content=research_brief)]}
+    return {
+        
+        "research_brief": research_brief
+            
+    }
 
 
 #The Logic: A Node is just a Python function that takes the current state, 
 # does some work (calls Llama 3), and returns the update.
-def generate_node(state: GraphState) -> dict: # every node recives the entire state
+def generate_node(state: GraphState) -> dict: # every node receives the entire state
+    parts = []
+    if state.summarize:
+        parts.append(f"Summarize: {state.summarize}")
+    if state.critique:
+        parts.append(f"Critique: {state.critique}")
+    if not parts:
+        parts.append(f"Create the First Draft: [from this resume , {state.current_draft}, based on the Job Description: {state.job_description}]")
+    
+    generate_input = HumanMessage(
+        content=("\n\n".join(parts)))
     
     rew_resume = generation_chain.invoke({ 
                                           
-                                          "messages": state.chat_history
+                                          "messages": [generate_input]
                                       
                                         })  # the messages varible comes from MessagesPlaceholder(variable_name="messages")
     # LangGraph will 'add' this one message to your 'chat_history'
     return {
         "current_draft": rew_resume,
         "iterations": state.iterations + 1,
-        "chat_history": [AIMessage(content=rew_resume)]
         }  # we return the entire chat history with the new message appended at the end. This is important for reflection to work properly, as it needs the full context of the conversation to provide meaningful feedback.
 
 def reflect_node(state: GraphState) -> dict:
     # 1. Pass the FULL chat_history so the Recruiter sees the JD AND the Draft
+    
+    reflect_input = HumanMessage(
+        content=(
+            "Job Description:\n"
+            f"{state.job_description}\n\n"
+            "Current Draft:\n"
+            f"{state.current_draft}\n\n"
+        )
+    )
+    
     critique = reflection_chain.invoke({
         
-        "messages": state.chat_history  #Dot notataion for pydantic
+        "messages": [reflect_input]  #Dot notataion for pydantic
     })
     
     # 2. Return the critique as an AIMessage (since the Recruiter is an AI)
     # Note: Some people prefer wrapping critiques in HumanMessage 
     # to "trick" the next node into thinking a human gave feedback, 
     # but AIMessage is technically more accurate here.
-    return {"chat_history": [HumanMessage(content=critique)],
-            
-            "critique": critique
+    return {
+        
+        "critique": critique
             
             }
 
@@ -105,9 +150,7 @@ graph = StateGraph(GraphState)
 
 
 def should_continue(state: GraphState) -> str:
-    # This is a simple stopping condition that checks if length of chat_history is greater than 4 (1 human input + 2 AI responses + 1 critique).
-    # In a real application, you might want to use a more sophisticated method, 
-    # such as checking for user input or a specific signal in the messages.
+    # This function checks the current state to decide whether we should continue reflecting and generating or if we should stop and return the final resume.
     Max_iterations = 3
     
     if state.iterations >= Max_iterations:
@@ -157,15 +200,11 @@ if __name__ == "__main__":
     
     initial_inputs = {
         
-    # "job_description": jd,
-    # "resume_content": resume_content,  
-    "chat_history": [
-        HumanMessage(content=f"JD: {jd[:1000]}\n\nResume: {resume_content[:2000]}")
-    ],
-    
+    "job_description": jd,
+    "current_draft": resume_content,
     "iterations": 0
 }
     
     print("\n--- Processing your Resume (Llama 3 is thinking...) ---")
     final_state = app.invoke(initial_inputs)
-    print(final_state["chat_history"][-1].content)
+    print(final_state["current_draft"])

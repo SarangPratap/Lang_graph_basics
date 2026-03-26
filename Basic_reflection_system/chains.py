@@ -28,6 +28,7 @@ generation_prompt = ChatPromptTemplate.from_messages(
             "Use Research Brief only as evidence support.\n"
             "Apply critique to revise the latest draft.\n"
             "Never invent facts, tools, dates, or metrics.\n"
+            "The cv should contain professional summary, skills section, experience section with bullet points, education section and projects. \n"
             "If the user provides critique, respond with a revised version  of your previous attempts.Output only the CV content. No acknowledgements, no critique, no explanations"
         ),
         MessagesPlaceholder(variable_name="messages"),
