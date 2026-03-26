@@ -1,4 +1,6 @@
 
 .env
-
-Basic_reflection_system/Resume_Sarang_pratap_chamola_Intern_kia.pdf
+.vscode
+__pycache__/
+*.pyc
+*.pkl
