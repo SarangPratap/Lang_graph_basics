@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from langchain_core.messages import BaseMessage, HumanMessage , AIMessage
 from langgraph.graph import END, StateGraph , message
 from operator import add
-from chains import generation_chain, reflection_chain
+from chains import generation_chain, reflection_chain, summarize_chain, research_chain
 from langchain_ollama import OllamaLLM
 from langchain_community.document_loaders import PyPDFLoader
 from pydantic import BaseModel, Field
@@ -14,6 +14,8 @@ load_dotenv()
 
 REFLECT = "reflect"
 GENERATE = "generate"
+RESEARCH = "research"
+SUMMARIZE = "summarize"
 
 
 def get_pdf_content(file_path: str) -> str:
@@ -34,7 +36,8 @@ def get_pdf_content(file_path: str) -> str:
 class GraphState(BaseModel):
     # job_description: str
     # resume_content: str
-
+    summarize : Optional[str]  = None
+    research_brief: Optional[str] = None
     current_draft : Optional[str] = None #expect a str
     critique: Optional[str] = None
     iterations: int = 0
@@ -43,7 +46,26 @@ class GraphState(BaseModel):
     # memory (The message Thread): This is a list of all the messages that have been exchanged in the conversation so far.
     chat_history: Annotated[list[BaseMessage], add] = Field(default_factory=list)
     
+
+
+def summarize_node(state: GraphState):
+    summary = summarize_chain.invoke({
+        "messages": state.chat_history
+    })
     
+    return {"summarize": summary,
+            "chat_history": [AIMessage(content=summary)]}
+
+
+
+
+def research_node(state: GraphState):
+    research_brief = research_chain.invoke({
+        "messages": state.chat_history
+    })
+    
+    return {"research_brief": research_brief,
+            "chat_history": [AIMessage(content=research_brief)]}
 
 
 #The Logic: A Node is just a Python function that takes the current state, 
@@ -106,9 +128,13 @@ if __name__ == "__main__":
     #add nodes
     graph.add_node(GENERATE, generate_node)
     graph.add_node(REFLECT, reflect_node)
+    graph.add_node(RESEARCH, research_node)
+    graph.add_node(SUMMARIZE, summarize_node)
     
     #set entry point
-    graph.set_entry_point(GENERATE)
+    graph.set_entry_point(RESEARCH)
+    graph.add_edge(RESEARCH, SUMMARIZE)
+    graph.add_edge(SUMMARIZE, GENERATE)
     
     
     graph.add_conditional_edges(
