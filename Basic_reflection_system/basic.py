@@ -1,14 +1,23 @@
 import sys
 import os
-from typing import Annotated, TypedDict, List, Sequence, Optional
+import shutil
+from typing import Annotated, Optional
 from dotenv import load_dotenv
 from langchain_core.messages import BaseMessage, HumanMessage , AIMessage
-from langgraph.graph import END, StateGraph , message
+from langgraph.graph import END, StateGraph 
 from operator import add
 from chains import generation_chain, reflection_chain, summarize_chain, research_chain
-from langchain_ollama import OllamaLLM
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.documents import Document
 from pydantic import BaseModel, Field
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_ollama import OllamaEmbeddings
+from langchain_chroma import Chroma
+
+embedding_model = OllamaEmbeddings(
+    model="llama3",
+)
+
 
 load_dotenv() 
 
@@ -18,12 +27,6 @@ RESEARCH = "research"
 SUMMARIZE = "summarize"
 
 
-def get_pdf_content(file_path: str) -> str:
-    loader = PyPDFLoader(file_path)
-    documents = loader.load()
-    # combine all pages into one string
-    content = "\n".join([doc.page_content for doc in documents])
-    return content
 
 
 
@@ -40,6 +43,7 @@ class GraphState(BaseModel):
     current_draft : Optional[str] = None #expect a str
     critique: Optional[str] = None
     iterations: int = 0
+    retrieved_context: Optional[list[Document]] = None
     optimization_score: int = Field(default= 0, ge=0 , le=100)
     
     # memory (The message Thread): This is a list of all the messages that have been exchanged in the conversation so far.
@@ -71,13 +75,15 @@ def summarize_node(state: GraphState):
 
 
 def research_node(state: GraphState):
+    
+    resume_context = "\n\n".join(doc.page_content for doc in (state.retrieved_context or []))
     research_input = HumanMessage(
         
         content=(
             "Job Description:\n"
             f"{state.job_description}\n\n"
             "Resume:\n"
-            f"{state.current_draft}\n\n"
+            f"{resume_context}\n\n"
             
         )
         
@@ -89,7 +95,8 @@ def research_node(state: GraphState):
     
     return {
         
-        "research_brief": research_brief
+        "research_brief": research_brief,
+        "retrieved_context": state.retrieved_context    
             
     }
 
@@ -157,17 +164,122 @@ def should_continue(state: GraphState) -> str:
         return END  # Stop if we've reached the maximum number of iterations
     else:
         return "continue" # Otherwise, we continue reflecting and generating until we hit the stopping condition
+
+def split_documents_into_chunks(documents: list[Document]) -> list[Document]:
+    """Split LangChain Document objects into smaller Document chunks."""
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=100, chunk_overlap=0)
+    return text_splitter.split_documents(documents)
+
+
+def split_text_into_chunks(text: str, metadata: dict = None) -> list[Document]:
+    """Split raw text (like terminal JD input) into Document chunks with optional metadata."""
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=100, chunk_overlap=0)
+    metadatas = [metadata] if metadata else None
+    return text_splitter.create_documents([text], metadatas=metadatas)
     
+
+def get_pdf_content(file_path: str) -> list:
+    """Generate a resume content from a PDF file. 
+    This function uses PyPDFLoader to load the PDF and then splits 
+    it into chunks using RecursiveCharacterTextSplitter. 
+    The resulting list of text chunks is returned for further 
+    processing in the resume optimization pipeline.
+
+    Args:
+        file_path (str): _description_
+
+    Returns:
+        list: A list of text chunks
+    """
+    loader = PyPDFLoader(file_path)
+    documents = loader.load()   # a list of langchain documents 
+    
+    # combine all pages into one string
+    #content = "\n".join([doc.page_content for doc in documents])
+    
+   # split the content of all the documents 
+    return documents
+
+
+def create_vector_store(
+    chunks,
+    persist_directory: str = "./chroma_langchain_db",
+    embedding_model: OllamaEmbeddings = embedding_model,
+    reset_db: bool = False,
+):
+    """Create a vector store from a list of text chunks. 
+    This function takes a list of text chunks (which can be generated from a PDF resume or terminal input) and creates a vector store using the specified embedding model. 
+    The resulting vector store can be used for efficient retrieval of relevant information during the resume optimization process.
+
+    Args:
+        chunks (list): A list of text chunks to be embedded and stored in the vector store.
+        persist_directory (str, optional): The directory where the vector store should be saved. Defaults to "./chroma_langchain_db".
+        embedding_model (OllamaEmbeddings, optional): The embedding model to use for creating vector representations of the text chunks. Defaults to embedding_model.
+    """
+    
+    if reset_db and os.path.exists(persist_directory):
+        shutil.rmtree(persist_directory)
+        print(f"Reset complete: deleted existing DB at {persist_directory}")
+
+    print("Creating embedding and storing them in ChromaDB...")
+
+    vector_store = Chroma.from_documents(
+        documents=chunks,
+        embedding=embedding_model,
+        persist_directory=persist_directory,
+        collection_name="resume_chunks",
+        collection_metadata={"hnsw:space": "cosine"},
+    )
+
+    print("Embedding and storage complete.")
+    print(f"Vector store has {vector_store._collection.count()} entries and is saved to {persist_directory}.")
+    
+    return vector_store
+
+
+def retrieve_relevant_resume_chunks(vector_store, query: str, k: int = 5) -> list[Document]:
+    """Retrieve relevant resume chunks from the vector store based on a query.
+    This function takes a query (which can be a specific question or topic related to the resume) and retrieves the most relevant text chunks from the vector store using similarity search.
+    The retrieved chunks can then be used to provide additional context for reflection and generation in the resume optimization process.
+
+    Args:
+        vector_store: The vector store from which to retrieve chunks.
+        query (str): The query to use for retrieving relevant resume chunks.
+        k (int, optional): The number of relevant chunks to retrieve. Defaults to 5."""
+        
+    retriever = vector_store.as_retriever(search_kwargs={"k": k})
+    docs = retriever.invoke(query)
+    return docs
+    
+
+
 
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python basic.py <resume.pdf> [--reset-db]")
+        sys.exit(1)
+
     file_name = sys.argv[1]
+    reset_db = "--reset-db" in sys.argv[2:]
+    path= os.path.join("D:\\New Projects\\LLM\\Langgraph\\Basic_reflection_system", file_name)
+    
+    #jd chunk
     print("PASTE THE JOB DESCRIPTION BELOW (Press Enter + Ctrl+Z on Windows or Ctrl+D on Mac when finished):")
     jd= sys.stdin.read()
-    path= os.path.join("D:\\New Projects\\LLM\\Langgraph\\Basic_reflection_system", file_name)
-    resume_content = get_pdf_content(path)
+    #jd_chunks = split_text_into_chunks(jd, metadata={"source": "job_description"})
     
+    #resume chunk
+    documents = get_pdf_content(path)
+    resume_chunks = split_documents_into_chunks(documents)
+    
+    vector_store = create_vector_store(resume_chunks, reset_db=reset_db)
+    
+    required_chunks = retrieve_relevant_resume_chunks(vector_store, query=jd)
+    
+    # Keep them separate so each source can be handled independently if needed.
+        
     #add nodes
     graph.add_node(GENERATE, generate_node)
     graph.add_node(REFLECT, reflect_node)
@@ -186,8 +298,7 @@ if __name__ == "__main__":
             "continue": "reflect",  # If we should continue, go to the REFLECT node
             END: END  # If we should stop, go to the END state
         }
-        
-        
+            
     )
     
     graph.add_edge(REFLECT, GENERATE)  # Add a self-loop on the REFLECT node to allow for multiple rounds of reflection
@@ -201,7 +312,7 @@ if __name__ == "__main__":
     initial_inputs = {
         
     "job_description": jd,
-    "current_draft": resume_content,
+    "retrieved_context": required_chunks,
     "iterations": 0
 }
     
