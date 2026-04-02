@@ -225,19 +225,29 @@ if __name__ =="__main__":
     
     graph = StateGraph(Graph_state)
     resume_path = sys.argv[1]
-    print("Enter job description: ")
+    print("Enter job description (paste text and press Enter): ")
     try:
         job_description = input().strip()
     except KeyboardInterrupt:
         print("\nInterrupted by user.")
         sys.exit(0)
 
-    index = ingestion_pipeline(resume_path)
-    retrieved_context = query_pipeline(index, job_description, top_k=5)
+    # Save job description to file to avoid PowerShell issues
+    with open("job_description.txt", "w", encoding="utf-8") as f:
+        f.write(job_description)
     
-    print("Retrieved Context:")
-    for i, context in enumerate(retrieved_context):
-        print(f"{i+1}. {context[:200]}...")  # Print the first 200 characters of each retrieved context
+    print("Job description received. Processing...\n")
+    
+    index = ingestion_pipeline(resume_path)
+    retrieved_context = query_pipeline(index, job_description, top_k=30)
+    
+    # Save retrieved context to file to avoid PowerShell interpretation issues
+    with open("retrieved_context.txt", "w", encoding="utf-8") as f:
+        total_chars = sum(len(ctx) for ctx in retrieved_context)
+        f.write(f"Retrieved Context: {len(retrieved_context)} chunks, {total_chars} total characters\n\n")
+        for i, context in enumerate(retrieved_context):
+            f.write(f"{i+1}. [{len(context)} chars]\n{context}\n\n" + "="*80 + "\n\n")
+    print(f"Retrieved {len(retrieved_context)} context chunks. Saved to retrieved_context.txt")
     
     graph.set_entry_point(RESEARCH)
     graph.add_node(RESEARCH, research_node)
