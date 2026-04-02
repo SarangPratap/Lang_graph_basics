@@ -1,6 +1,6 @@
 ﻿# Lang_graph_basics
 
-A small LangGraph-based project for iterative, ATS-aware resume rewriting with LLMs.
+A LangGraph-based project for iterative, ATS-aware resume rewriting with LLMs.
 
 ## What Is Implemented
 
