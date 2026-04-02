@@ -167,13 +167,13 @@ def should_continue(state: GraphState) -> str:
 
 def split_documents_into_chunks(documents: list[Document]) -> list[Document]:
     """Split LangChain Document objects into smaller Document chunks."""
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=100, chunk_overlap=0)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=60, separators=["\n\n", "\n", ". ", " "])
     return text_splitter.split_documents(documents)
 
 
 def split_text_into_chunks(text: str, metadata: dict = None) -> list[Document]:
     """Split raw text (like terminal JD input) into Document chunks with optional metadata."""
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=100, chunk_overlap=0)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=60, separators=["\n\n", "\n", ". ", " "])
     metadatas = [metadata] if metadata else None
     return text_splitter.create_documents([text], metadatas=metadatas)
     
@@ -237,7 +237,11 @@ def create_vector_store(
     return vector_store
 
 
-def retrieve_relevant_resume_chunks(vector_store, query: str, k: int = 5) -> list[Document]:
+def retrieve_relevant_resume_chunks(
+    vector_store,
+    query: str,
+    k: int = 5,
+) -> list[Document]:
     """Retrieve relevant resume chunks from the vector store based on a query.
     This function takes a query (which can be a specific question or topic related to the resume) and retrieves the most relevant text chunks from the vector store using similarity search.
     The retrieved chunks can then be used to provide additional context for reflection and generation in the resume optimization process.
@@ -247,13 +251,14 @@ def retrieve_relevant_resume_chunks(vector_store, query: str, k: int = 5) -> lis
         query (str): The query to use for retrieving relevant resume chunks.
         k (int, optional): The number of relevant chunks to retrieve. Defaults to 5."""
         
-    retriever = vector_store.as_retriever(search_kwargs={"k": k})
+    retriever = vector_store.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": k},
+    )
     docs = retriever.invoke(query)
+    print(f"Retrieved {len(docs)} chunks using similarity search (top-{k}).")
     return docs
     
-
-
-
 
 
 if __name__ == "__main__":
@@ -273,6 +278,8 @@ if __name__ == "__main__":
     #resume chunk
     documents = get_pdf_content(path)
     resume_chunks = split_documents_into_chunks(documents)
+    
+    
     
     vector_store = create_vector_store(resume_chunks, reset_db=reset_db)
     

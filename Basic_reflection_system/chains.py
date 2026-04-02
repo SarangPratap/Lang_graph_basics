@@ -125,11 +125,13 @@ summarize_prompt = ChatPromptTemplate.from_messages(
             "6. Output only the exact structure below.\n\n"
             "Output format:\n"
             "1) Target Positioning\n"
-            "2) Priority Requirements (Ranked)\n"
-            "3) Evidence to Emphasize\n"
-            "4) Keyword Injection Plan\n"
-            "5) Gap Handling Guidance\n"
-            "6) Generator Instructions\n"
+            "2. Do not invent projects, tools, metrics, employers, dates, or achievements.\n"
+            "3) Priority Requirements (Ranked)\n"
+            "4) Evidence to Emphasize\n"
+            "5) Keyword Injection Plan\n"
+            "6) Gap Handling Guidance\n"\
+            "7)Use only facts and evidence present in the provided Research Brief.\n"
+            "7) Generator Instructions\n"
             "- 8-12 precise directives"
         ),
         MessagesPlaceholder(variable_name="messages"),
