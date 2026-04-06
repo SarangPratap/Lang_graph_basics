@@ -71,34 +71,32 @@ def summarize_node(state: GraphState):
             "summarize": summary,
     }
 
-
-
-
-def research_node(state: GraphState):
-    
-    resume_context = "\n\n".join(doc.page_content for doc in (state.retrieved_context or []))
-    research_input = HumanMessage(
-        
-        content=(
-            "Job Description:\n"
-            f"{state.job_description}\n\n"
-            "Resume:\n"
-            f"{resume_context}\n\n"
-            
+def make_research_node(vector_store, k: int = 10):
+    def research_node(state: GraphState) -> dict:
+        relevant_resume = retrieve_relevant_resume_chunks(
+            vector_store,
+            query=state.job_description,
+            k=k,
         )
-        
-    )
-    
-    research_brief = research_chain.invoke({
-        "messages": [research_input]
-    })
-    
-    return {
-        
-        "research_brief": research_brief,
-        "retrieved_context": state.retrieved_context    
-            
-    }
+        resume_context = "\n\n".join(doc.page_content for doc in relevant_resume)
+        research_input = HumanMessage(
+            content=(
+                "Job Description:\n"
+                f"{state.job_description}\n\n"
+                f"Relevant Resume:\n{resume_context}\n\n"
+            )
+        )
+
+        research_brief = research_chain.invoke({
+            "messages": [research_input]
+        })
+
+        return {
+            "research_brief": research_brief,
+            "retrieved_context": relevant_resume,
+        }
+
+    return research_node
 
 
 #The Logic: A Node is just a Python function that takes the current state, 
@@ -283,18 +281,16 @@ if __name__ == "__main__":
     
     vector_store = create_vector_store(resume_chunks, reset_db=reset_db)
     
-    required_chunks = retrieve_relevant_resume_chunks(vector_store, query=jd)
-    
     # Keep them separate so each source can be handled independently if needed.
         
     #add nodes
     graph.add_node(GENERATE, generate_node)
     graph.add_node(REFLECT, reflect_node)
-    graph.add_node(RESEARCH, research_node)
+    graph.add_node(RESEARCH, make_research_node(vector_store, k=10))
     graph.add_node(SUMMARIZE, summarize_node)
     
     #set entry point
-    graph.set_entry_point(RESEARCH)
+    graph.set_entry_point(RESEARCH)  # Pass the vector store and k value to the research node
     graph.add_edge(RESEARCH, SUMMARIZE)
     graph.add_edge(SUMMARIZE, GENERATE)
     
@@ -319,8 +315,8 @@ if __name__ == "__main__":
     initial_inputs = {
         
     "job_description": jd,
-    "retrieved_context": required_chunks,
-    "iterations": 0
+    "iterations": 0,
+    
 }
     
     print("\n--- Processing your Resume (Llama 3 is thinking...) ---")

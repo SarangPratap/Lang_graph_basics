@@ -8,3 +8,6 @@ chroma_langchain_db
 run-*.json
 Resume_*.pdf
 Resume_Creation_tool/__pycache__
+Resume_Creation_tool/llamaidx_db/
+Resume_Creation_tool/retrieved_context.txt
+Resume_Creation_tool/mlflow.db
